@@ -23,7 +23,8 @@ Different models were fitted with different ways of handling categorical variabl
 ![](./figures/model2.png)
 
 ### Find the "best" model with cross-validation
-Model 1 and 2 are both doing well. Model 2 is more interpretable since the categorical variables have fewer levels, so it appears to be our "best" model here.
+Model 1 and 2 are both doing well. Model 2 is more interpretable since the categorical variables have fewer levels, so it appears to be our "best" model here.   
+    
 ![](./figures/performance.png)
 
 ## Results
