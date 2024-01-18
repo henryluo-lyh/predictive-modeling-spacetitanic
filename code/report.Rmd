@@ -1,0 +1,439 @@
+---
+title: "583 Final Report"
+author: "Henry Luo, Renghe Tang, Weijia Lyu"
+date: "2023-03-24"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r global_options, include=FALSE, cache=FALSE}
+## Set some options for knitr to apply globally
+knitr::opts_chunk$set(cache=TRUE,
+                      echo=FALSE,
+                      autodep=TRUE,
+                      message=FALSE,
+                      warning=FALSE,
+                      results = "hide",
+                      dev='pdf',
+                      out.width="50%",
+                      fig.asp=0.75,
+                      fig.align='center')
+
+```
+
+```{r, echo=FALSE, message=FALSE, results='hide'}
+library(dplyr)
+library(tidyr)
+library(psych)
+library(gridExtra)
+library(Metrics)
+st.data <- read.csv("space_titanic.csv")
+st.data <- replace(st.data, st.data == "", NA)
+
+# st.data <- mutate(st.data, across(c(HomePlanet,CryoSleep,Destination,VIP,Transported), factor))
+
+st.data <- separate(st.data, PassengerId, into = c("Group", "InGroupId"), sep = "_")
+st.data <- separate(st.data, Cabin, into = c("Deck", "RoomNum", "Side"), sep = "/")
+
+st.data$Group <- as.numeric(st.data$Group)
+st.data$RoomNum <- as.numeric(st.data$RoomNum)
+#st.data$InGroupId <- as.factor(st.data$InGroupId)
+#st.data$Deck <- as.factor(st.data$Deck)
+#st.data$Side <- as.factor(st.data$Side)
+
+```
+# Introduction
+which encountered a spacetime anomaly recently. Half of the passengers were lost to an alternative dimension. An exploratory analysis investigating the relationship between passengers' features and their probability of being transported was launched and yielded troubling results. The transportation does not seem to be random. Passengers' chance of being transported appears to differ by their features. Cryosleep status, age, and even deck location seem to affect passengers' chance of being transported to the alternative dimension. The current project further investigates the situation with logistic regression analysis, hoping to gain further understanding of how and by what magnitude different features affect the chance of being transported. A better understanding of the relationship between passenger features and the chance of transportation could help other spaceships and passengers prepare for potential encounters with the spacetime anomaly.
+
+# Further processing of the data set
+Additional cleaning and processing of the data set are conducted. 24% of the total passenger records contain missing values. Since the function in R for logistics regression ignores rows containing missing values by default, it is necessary to fill in the missing values to retain the information from 24% of the data in the analysis. Missing values in categorical variables are filled with "NR," representing not reported. Missing `RoomNum` is filled with -1 to distinguish it from the other room numbers. Missing values in numeric variables outlining passenger's spending are filled with mode 0 since those variables are extremely skewed and heavy on zero. Filing with mean or median does not seem appropriate. 
+Passengers `Name` was found to be an important variable by the random forest model in the exploratory analysis. It seems to suggest that family status is a playing a role, as there are many passengers sharing the same last name. Therefore a new binary categorical variable family is added to denote if family members are on board. If a passenger shares the same last name and is in the same `Group` with other passengers, their `Family` variable is denoted as "True." 
+
+```{r, echo=FALSE}
+library(DescTools)
+library(broom)
+sum(is.na(st.data))
+
+sum(rowSums(is.na(st.data)) > 0)/8693
+
+st.data[, c("RoomService", "FoodCourt", "ShoppingMall", "Spa", "VRDeck")] <-
+          lapply(st.data[, c("RoomService", "FoodCourt", "ShoppingMall", "Spa", "VRDeck")],  function(x) ifelse(is.na(x), 0, x))
+
+st.data[, c("Deck", "Side")] <- lapply(st.data[, c("Deck", "Side")], function(x) ifelse(is.na(x), "NR", x))
+st.data$RoomNum <- ifelse(is.na(st.data$RoomNum), -1, st.data$RoomNum)
+st.data[, c("CryoSleep", "HomePlanet", "Destination","VIP", "Name")] <- 
+  lapply(st.data[, c("CryoSleep", "HomePlanet", "Destination","VIP", "Name")], function (x) ifelse(is.na(x), "NR", x))
+
+st.data$Age <- ifelse(is.na(st.data$Age), mean(na.omit(st.data$Age)), st.data$Age)
+
+
+
+st.data <- mutate(st.data, across(c(HomePlanet,CryoSleep,Destination,VIP,Transported), factor))
+st.data$InGroupId <- as.factor(st.data$InGroupId)
+st.data$Deck <- as.factor(st.data$Deck)
+st.data$Side <- as.factor(st.data$Side)
+st.data$Side <- relevel(st.data$Side, ref = "P")
+
+
+st.data <- separate(st.data, Name, into = c("FirstName", "LastName"), sep = " ")
+st.data$LastName <- ifelse(is.na(st.data$LastName), "NR", st.data$LastName)
+#st.data$family <- ifelse(duplicated(st.data$LastName) | duplicated(st.data$LastName, fromLast = TRUE), "Yes", "No")
+st.data$Family <- ifelse(duplicated(st.data[, c("Group", "LastName")]) | 
+                   duplicated(st.data[, c("Group", "LastName")], fromLast = TRUE), 
+                   "Yes", "No")
+st.data$Family <- as.factor(st.data$Family)
+
+
+na_cols <- colSums(is.na(st.data)) > 0
+```
+# Logistic regression models
+## Model 1 
+
+
+allegedly fictional records of passengers aboard the spaceship Titanic. A logistic regression model, model 1, is fitted on the data. Backward selection method is used for variable selection. Variables are removed one by one from the full model until the simplest model with the lowest AIC is obtained. The resulting model contains 13 variables. Categorical variables `HomePlanet,` `CryoSleep,` `Deck,` `Side,` `Destination` and numerical variables `Age,` `RoomService,` `FoodCourt,` `ShoppingMall,` `Spa,` and `VRDeck` are included. `VIP`, `RoomNum,` and `Famly` are excluded The result is largely consistent with the finding in the exploratory analysis. The model obtained an in-sample log-loss of 0.431, a misclassification rate of 0.205, and a recall of 0.817. The relatively small in-sample log-loss and misclassification rate suggest that the model is a decent fit for the data for the purpose of the current investigation. Since false negatives, falsely predicting a passenger to survive the anomaly, is particularly harmful, recall is selected to be an important metric to examine as it can be considered a measure of the model's ability to avoid false negatives. A recall of 0.817 indicates that the model can detect 81.7% of the true positive cases, leaving about 18.3% to potentially be false negatives. Model 1 is summarized in Table 1. 
+
+```{r, message = FALSE, warning=FALSE, echo=FALSE, results='hide'}
+library(MASS)
+model1 <- glm(Transported~.-FirstName-LastName, family = "binomial", data = st.data)
+#summary(model1)
+step.model1 <- stepAIC(model1, direction = "backward", trace = FALSE)
+summary(step.model1)
+y <- abs(as.numeric(st.data$Transported)-1)
+pred <- predict(step.model1, type = 'response')
+logloss.full <- logLoss(y, pred)
+
+```
+```{r, results='markup'}
+model1.summary <- tidy(step.model1)
+knitr::kable(model1.summary, caption = "Summary of Model 1",align='c', floating = FALSE)
+```
+
+```{r, echo=FALSE, results='hide'}
+threshold <- 0.5
+pred <- predict(step.model1, type = 'response')
+predicted_class <- ifelse(pred > threshold, "True", "False") 
+
+table(st.data$Transported, predicted_class)
+misclass1 <- (986+799)/nrow(st.data)
+misclass1
+
+recall1 <- 3579/(3579+799)
+recall1
+```
+## Reduced model 1
+The random forest model in the exploratory analysis suggested that `InGroupId` has the second lowest variable importance, with the lowest being `VIP.` In the logistic regression model, only one level of `InGroupId` is found to have a significant difference from the reference level. It seems possible that `InGroupId` could be potentially excluded from the model without significantly affecting model fit to further simplify the model. A likelihood ratio test (LRT) is therefore conducted to see if `InGroupId` should be included in the model. A reduced model without `InGroupId` is fitted and compared with the full model in LRT. The resulting p-value is 0.000163042. The p-value is smaller than 0.05, and the null hypothesis that `InGroupId` should not be included in the model is rejected. LRT test suggests that no additional variable can be removed. The model appears to be the simplest in terms of the number of variables
+```{r, warning = FALSE, echo=FALSE, results='hide'}
+model.reduced <- glm(Transported~.-FirstName-LastName  - InGroupId, family = "binomial", data = st.data)
+summary(model.reduced)
+step.model.reduced <- stepAIC(model.reduced, direction = "backward", trace = FALSE)
+summary(step.model.reduced)
+```
+
+```{r, echo=FALSE, results='hide'}
+log.like.full <- as.numeric(-2*logLik(step.model1))
+log.like.reduced <- as.numeric(-2*logLik(step.model.reduced))
+lrt <- log.like.reduced - log.like.full
+pchisq(lrt,1,lower=FALSE)
+```
+## Model 2: treatment of complex categorical variables
+Model 1 is not optimal in terms of its interpretability. Some categorical variables, such as `InGroupId` and `Deck` have too many levels. Since the levels of the categorical variables are only compared to the reference level, it is inefficient and difficult to interpret categorical variables with many levels. To cope with the problem, model 2 is fitted with the variable `Deck` re-coded according to findings from the exploratory analysis. Deck A, T, and NR, which are found to have no difference in the probability of transportation are coded as 0. Deck B, C, and G, which have a higher probability of being transported are coded as 2. Deck D, E, and F, with lower probability of being transported, are coded as 1. `InGroupId` and `RoomNum`are treated as numeric. Backward selection with AIC is applied. Model 2 is summarized in Table 2.
+
+```{r, echo=FALSE}
+st.data[,c("RoomNum", "InGroupId")] <- lapply(st.data[, c("RoomNum", "InGroupId")], as.numeric)
+st.data$Deck <- as.character(st.data$Deck)
+st.data$Deck[st.data$Deck %in% c("B", "C", "G")] <- 2
+st.data$Deck[st.data$Deck %in% c("D", "E", "F")] <- 1
+st.data$Deck[st.data$Deck %in% c("A", "T", "NR")] <- 0
+st.data$Deck <- as.factor(st.data$Deck)
+```
+
+The in-sample log-loss of model 2 is 0.437, which is slightly higher than that of model 1. The misclassification rate is 0.205, and the recall is 0.817, which is the same as that of model 1. It appears that the prediction accuracy of the model is not significantly affected by the treatment of the categorical variables. However, the interpretability of model 2 is much better than that of model 1. It is clear now that both deck category 1 and 2 actually have an increased chance of being transported, and `InGroupId` is excluded from the model when treated as a numeric variable. 
+```{r, warning=FALSE, echo=FALSE, results='hide'}
+model2 <- glm(Transported~.-FirstName-LastName, family = "binomial", data = st.data)
+step.model2 <- stepAIC(model2, direction = "backward", trace = FALSE)
+summary(step.model2)
+y <- abs(as.numeric(st.data$Transported)-1)
+pred <- predict(step.model2, type = 'response')
+logloss.model2 <- logLoss(y, pred)
+logloss.model2
+```
+
+```{r, echo=FALSE, results='hide'}
+threshold <- 0.5
+pred <- predict(step.model2, type = 'response')
+predicted_class <- ifelse(pred > threshold, "True", "False") 
+
+table(st.data$Transported, predicted_class)
+misclass2 <-(984+801)/nrow(st.data)
+misclass2
+
+recall2 <- 3577/(3577+801)
+recall2
+```
+
+
+```{r, results='markup'}
+model2.summary <- tidy(step.model2)
+knitr::kable(model2.summary, caption = "Summary of Model 2",align='c', floating = FALSE)
+```
+
+## Model 3: Log-transformation
+The numerical variables are highly skewed, with the majority of values being 0. To assess potential effects of extreme skewness on the model fit, model 3 is fitted on log-transformed numerical data. The in-sample log-loss of model 3 is 0.498, which is higher than model 1 and model 2. The misclassification rate and recall are both worse for model 3 than for the other models, which are 0.237 and 0.760, respectively. It seems that log transformation may not have preserved the underlying structure of the numerical variables. Model 3 is summarized in Table 3.
+
+```{r, warning = FALSE, echo=FALSE, results='hide'}
+data.check <- st.data
+data.check.nu <- data.check %>% 
+  select_if(is.numeric)
+
+data.check.nu$pred <- pred
+data.check.nu <- data.check %>% 
+  select_if(is.numeric)
+
+data.check.nu <- data.check.nu + 0.01
+data.check.nu <- log(data.check.nu)
+data.check.nu$Transported <- st.data$Transported
+
+#residualPlots(glm.log)
+
+```
+
+```{r, echo=FALSE, results='hide'}
+factor_columns <- sapply(st.data, is.factor)
+factor_columns
+
+data.factor <- st.data[,factor_columns]
+
+transformed.data <- cbind(data.factor, data.check.nu)
+transformed.data <- transformed.data[, -7]
+transformed.data <- na.omit(transformed.data)
+
+transformed.model <- glm(Transported~., family ="binomial", data = transformed.data)
+step.transformed <- stepAIC(transformed.model, direction = "backward", trace = FALSE)
+summary(step.transformed)
+
+y <- abs(as.numeric(transformed.data$Transported)-1)
+pred <- predict(step.transformed, type = 'response')
+logloss.transformed <- logLoss(y, pred)
+logloss.transformed
+
+```
+
+```{r, echo=FALSE, results='hide'}
+threshold <- 0.5
+pred <- predict(step.transformed, type = 'response')
+predicted_class <- ifelse(pred > threshold, "True", "False") 
+
+table(transformed.data$Transported, predicted_class)
+misclass3 <-(988+1027)/nrow(transformed.data)
+misclass3
+recall3 <- 3251/(3251+1027)
+recall3
+```
+
+```{r, results='markup'}
+model3.summary <- tidy(step.transformed)
+knitr::kable(model3.summary, caption = "Summary of Model 3",align='c', floating = FALSE)
+```
+
+## The best model
+The performance metrics of the three models are summarized in Table 4. It is apparent that model 1 has the best performance for prediction, but the interpretability of model 1 is not ideal due to the many levels in the categorical variables. Model 2 has a very similar prediction performance compared to model 1 and better interpretability due to the further processing of the categorical variables. Therefore, model 2 appears to be the most appropriate model for investigating the relationship between passenger features and their chance of being transported. 
+
+```{r results='markup'}
+library(knitr)
+
+# Define the table data
+table_data <- data.frame(
+  Model = c("Model 1", "Model 2", "Model 3"),
+  MisclassificationRate = c(misclass1, misclass2, misclass3),
+  Recall = c(recall1, recall2, recall3),
+  LogLoss = c(logloss.full, logloss.model2, logloss.transformed)
+)
+
+# Render the table
+knitr::kable(table_data, caption = "Performance Metric of Fitted Models",align='c', floating = FALSE)
+```
+
+
+# Diagnostics of model 2
+Model 2 is diagnosed for potential issues. 
+
+### Multicollinearity
+Multicollinearity among variables is a problem that affects logistic models. To rule out the effect of multicollinearity on model 2, the variance inflation factor (VIF) is calculated. The VIF of all variables is below 5, which suggests that there is no significant multicollinearity in the data. 
+```{r, echo =FALSE, results='hide'}
+library(car)
+#residualPlots(step.model2)
+
+vif(step.model2)
+```
+
+## Residual plots
+The Pearson residual plots of each variable are displayed in Figure 1 and Figure 2. Figure 1 contains nine variables, Figure 2 contains the remaining four variables, and the plot of the residuals against the predicted values. The x-axis represents the values of the variables. The y-axis represents the Pearson residual corresponding to each value of the variable. It seems that model 2 sufficiently captures the relationship between the predictor variables and the response, as the residuals are mostly randomly distributed above and below zero with no significant patterns. However, there seem to be some outliers in the data whose residuals deviate significantly from the rest of the data, especially in spending-related variables such as `ShoppingMall`, `VRDeck`, and `Spa`.
+```{r, warning=FALSE, fig.cap="Pearson residual vs. variables of model 2", echo=FALSE, results='hide'}
+residualPlots(step.model2)
+```
+
+## Outliers
+Outliers of the spending-related numerical variables are removed by removing data that are two standard deviations away from the mean. 1294 entries are removed, which is 14.9% of the entire data set. The model is fitted again without the outliers. The resulting model does not differ interms of the important variables. The in-sample log-loss increased to 0.458 from 0.437 and the misclassification rate increased to 0.222 from 0.205. Only recall is improved slightly from 0.817 to 0.824. It seems removing outliers does not improve model fit except for making the model less vulnerable to false negatives. It seems that the outliers' effect is not very significant for the current model. 
+
+```{r}
+bond <- 2*sd(st.data$RoomService) + mean(st.data$RoomService)
+data.out <- st.data[st.data$RoomService < bond, ]
+bond <- 2*sd(st.data$ShoppingMall) + mean(st.data$ShoppingMall)
+data.out <- data.out[data.out$ShoppingMall < bond, ]
+bond <- 2*sd(st.data$VRDeck) + mean(st.data$VRDeck)
+data.out <- data.out[data.out$VRDeck < bond, ]
+bond <- 2*sd(st.data$VRDeck) + mean(st.data$VRDeck)
+data.out <- data.out[data.out$VRDeck < bond, ]
+bond <- 2*sd(st.data$Spa) + mean(st.data$Spa)
+data.out <- data.out[data.out$Spa < bond, ]
+bond <- 2*sd(st.data$Age) + mean(st.data$Age)
+data.out <- data.out[data.out$Age < bond, ]
+
+
+```
+
+
+```{r}
+model2 <- glm(Transported~.-FirstName-LastName, family = "binomial", data = data.out)
+step.model2.2 <- stepAIC(model2, direction = "backward", trace = FALSE)
+summary(step.model2.2)
+y <- abs(as.numeric(data.out$Transported)-1)
+pred <- predict(step.model2.2, type = 'response')
+logloss.model2.2 <- logLoss(y, pred)
+logloss.model2.2
+```
+
+```{r}
+threshold <- 0.5
+pred <- predict(step.model2.2, type = 'response')
+predicted_class <- ifelse(pred > threshold, "True", "False") 
+
+table(data.out$Transported, predicted_class)
+misclass2.2 <-(933+707)/nrow(data.out)
+misclass2.2
+
+recall2.2 <- 3301/(3301+707)
+recall2.2
+```
+
+## Cross-validation
+
+Cross-validation is conducted for model 2 to rule out potential overfitting. All of the logistic models fitted in the current analysis produced predictions of 0 and 1, which could be an indicator of overfitting. The 30% of the data set with categorical variables re-coded for model 2 is randomly sampled to be test set. The model is fitted on the remaining 70% of the data. The cross-validated log-loss is 0.439, which is very close to the in-sample log-loss of 0.437. The misclassification rate and recall are also very close to the in-sample measures, which are 0.203 and 0.811, respectively. The result indicates that the model is not likely to be overfitting. 
+
+
+```{r}
+library(caret)
+
+set.seed(123)
+index <- createDataPartition(st.data$Transported, p = 0.7, list = FALSE, times = 1)
+train_data <- st.data[index, ]
+test_data <- st.data[-index, ]
+
+```
+
+```{r, warning=FALSE}
+model2 <- glm(Transported~.-FirstName-LastName, family = "binomial", data = train_data)
+step.model2.3 <- stepAIC(model2, direction = "backward", trace = FALSE)
+summary(step.model2.3)
+y <- abs(as.numeric(test_data$Transported)-1)
+pred <- predict(step.model2.3, type = 'response', newdata = test_data)
+logloss.model2.3 <- logLoss(y, pred)
+logloss.model2.3
+
+```
+
+```{r}
+threshold <- 0.5
+pred <- predict(step.model2.3, type = 'response', newdata = test_data)
+predicted_class <- ifelse(pred > threshold, "True", "False") 
+
+table(test_data$Transported, predicted_class)
+misclass2.3 <-(283+248)/nrow(test_data)
+misclass2.3
+
+recall2.3 <- 1065/(1065+248)
+recall2.3
+```
+
+
+
+# Results
+```{r}
+library(broom)
+
+tidy(step.model2)
+summary(step.model2)
+```
+The most appropriate logistic regression model is determined for the analysis of the relationship between passenger features and the chance of being transported. 13 variables are found to affect the chance of being transported. Among the numerical variables, `Age`, `Group`, `RoomService`, `Spa`, and `VRDeck` negatively affect the probability of being transported. Passengers who are older, traveling with a group with a larger group number, using more room service, and spending more on entertainment on the ship are less likely to be transported. `FoodCourt`, `ShoppingMall`, and `RoomNum` are positively related to the probability of being transported. Passengers that eat more, shop more, and live in a room with a larger room number are more at risk of being transported.
+
+```{r, warning=FALSE}
+st.data$HomePlanet <-  relevel(st.data$HomePlanet, ref = "Mars")
+st.data$Deck <-  relevel(st.data$Deck, ref = "1")
+st.data$Destination <-  relevel(st.data$Destination, ref = "TRAPPIST-1e")
+
+model2 <- glm(Transported~.-FirstName-LastName, family = "binomial", data = st.data)
+step.model2.4 <- stepAIC(model2, direction = "backward", trace = FALSE)
+summary(step.model2.4)
+```
+
+For categorical variables, passengers whose home planet is Europa or Mars are more at risk of being transported than passengers who live on Earth, with passengers from Europa being more at risk than those from Mars. Passengers in CryoSleep or on the starboard side of the ship are more at risk of being transported. Passengers traveling to 55 Cancri e are more at risk than those traveling to PSO J318.5-22 and TRAPPIST-1e, with no difference between the latter two destinations. Deck area 1 (D, E, F) and 2 (B, C, G) are more vulnerable to transportation than deck area 0 (A, T, NR), with deck area 2 being relatively safer than deck area 1. 
+
+```{r}
+
+new_data1 <- subset(st.data, Age == 0 & Transported == 'True')[2, ]
+new_data2 <- subset(st.data, Age == 39 & Transported == 'True')[2, ]
+new_data3 <- subset(st.data, Age == 75 & Transported == 'True')[2, ]
+new_data <- rbind( new_data1, new_data2, new_data3)
+
+pred_origin <- predict(step.model2, newdata = new_data, type = "response")
+
+```
+
+The magnitude of the change in probability of being transported for each passenger when the passenger's features change can also be investigated from the model. For example, for an infant below age one who was in cryosleep, their probability of being transported would decrease by 0.31 if they woke up from cryosleep. A 39 years-old passenger would only have a decreased probability of 0.07. A passenger who was in deck area 0 would become more at risk of being transported if they were in deck area 1 by having an increased transported probability of 0.2.
+```{r}
+new_data_changed <- new_data
+new_data$CryoSleep
+
+new_data_changed[1, ]$CryoSleep = 'False'
+new_data_changed[2, ]$CryoSleep = 'False'
+new_data_changed[3, ]$CryoSleep = 'False'
+
+pred1 <- predict(step.model2, newdata = new_data_changed, type = "response")
+pred1
+pred_origin - pred1
+
+```
+
+```{r}
+
+new_data_changed <- new_data[3, ]
+# new_data$Deck
+
+new_data_changed$Deck = as.factor( 1 )
+
+pred1 <- predict(step.model2, newdata = new_data_changed, type = "response")
+pred1
+predict(step.model2, newdata = new_data[3, ], type = "response") - pred1
+
+new_data_changed$Deck = as.factor( 2 )
+
+pred1 <- predict(step.model2, newdata = new_data_changed, type = "response")
+pred1
+predict(step.model2, newdata = new_data[3, ], type = "response") - pred1
+
+```
+
+
+
+# Conclusion
+The current project identified an appropriate logistic model to investigate the relationship between the features of passengers on board the spaceship Titanic and their chance of being transported to an alternative dimension by the spacetime anomaly. Statistical evidence is obtained to determine that passengers were not transported at random. There are 13 distinct features affecting the probability of being transported. The recommendation from the current investigation to the spaceships in nearby areas and the passengers on board are the following. Prioritize evacuating children who are Europa residents in cryosleep on the starboard side of deck B, C, , or G, and are traveling to G 55 Cancri e. Direct passengers and crew unable to evacuate to the port side of deck A and T. Passengers should be aware that spending in food courts and shopping malls appear to slightly increase the risk of being transported while spending on room service, spa, and VR deck seems to slightly decrease the risk of being transported. 
+
+The current logistic model has limitations. Its prediction accuracy is not as good as non-parametric models such as a random forest. The definition of outliers in the passengers' records may need to be further refined due to the complex and extremely skewed nature of the data. The insights gained from the logistic model can be used with non-parametric models and additional information about the situation to arrive at a more detailed understanding of the mechanism of the spacetime anomaly. 
+
+
+
